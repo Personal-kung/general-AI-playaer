@@ -2,6 +2,11 @@ This project was built as to learn how to make general AI for ANY game
 
 Based on Alpha family
 
+Initial target game: **Connect4**
+
+- [Game online](https://papergames.io/en/r/-bQjtZdIV_)
+- [Rules](https://www.buffalolib.org/sites/default/files/gaming-unplugged/inst/Connect%204%20Instructions.pdf)
+
 ## Tasklist
 To adapt your one-week AlphaZero project to "connect" to an online game and learn its rules through observation, your Day 1 will shift from manual coding to an **Automated Discovery and Environment Reconstruction** phase. 
 
