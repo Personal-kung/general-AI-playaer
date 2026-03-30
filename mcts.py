@@ -13,7 +13,13 @@ class MCTS:
         self.Ns = {}
         self.Ps = {}
 
-    def search(self, state):
+    def search(self, state, depth=0):
+        # Safety Trigger: Stop if we go deeper than 100 moves (Board size limit)
+        if depth > 200:
+            return 0
+
+        s = state.astype(np.int8).tobytes()
+
         # 1. Robust Hashing: Ensure state is integer for consistent keys
         if isinstance(state, np.ndarray):
             # 1. Round to handle float precision
@@ -80,7 +86,8 @@ class MCTS:
         next_state = self.game.get_canonical_form(next_state, next_player)
 
         # This MUST capture the value 'v' from the deeper node
-        v = self.search(next_state)
+        # Increment depth here
+        v = self.search(next_state, depth=depth + 1)
 
         # 5. BACKPROPAGATION
         # Ensure 's' is the key for the CURRENT state, not the next_state
