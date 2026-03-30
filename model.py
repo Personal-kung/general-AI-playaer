@@ -2,53 +2,49 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class AlphaNet(nn.Module):
-    def __init__(self, input_shape, action_size, num_res_blocks=4):
-        super().__init__()
-        c, h, w = input_shape
-
-        # Initial Convolution
+    """
+    A unified Policy-Value Network (AlphaZero style) that adapts 
+    to any board size (rows x cols) and action space.
+    """
+    def __init__(self, input_shape, action_size):
+        super(AlphaNet, self).__init__()
+        # input_shape: (channels, rows, cols)
+        _, self.rows, self.cols = input_shape
+        
+        # Shared Feature Extractor (Convolutional Backbone)
         self.conv = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU()
+            nn.Conv2d(1, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU()
         )
+        
+        # Flattened size for fully connected layers
+        self.flatten_size = 64 * self.rows * self.cols
 
-        # Residual Blocks
-        self.res_blocks = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Conv2d(64, 64, kernel_size=3, padding=1),
-                    nn.BatchNorm2d(64),
-                    nn.ReLU(),
-                    nn.Conv2d(64, 64, kernel_size=3, padding=1),
-                    nn.BatchNorm2d(64),
-                )
-                for _ in range(num_res_blocks)
-            ]
-        )
-
-        # Heads
-        self.policy_conv = nn.Conv2d(64, 2, kernel_size=1)
-        self.value_conv = nn.Conv2d(64, 1, kernel_size=1)
-
-        # Dynamic calculation of linear input features
-        self.flat_features_policy = 2 * h * w
-        self.flat_features_value = 1 * h * w
-
-        self.policy_fc = nn.Linear(self.flat_features_policy, action_size)
-        self.value_fc = nn.Sequential(
-            nn.Linear(self.flat_features_value, 64),
+        # Policy Head: Returns Log-Probabilities over all legal moves
+        self.policy_head = nn.Sequential(
+            nn.Linear(self.flatten_size, 128),
             nn.ReLU(),
+            nn.Linear(128, action_size),
+            nn.LogSoftmax(dim=1)
+        )
+
+        # Value Head: Returns scalar in range [-1, 1] (win/loss probability)
+        self.value_head = nn.Sequential(
+            nn.Linear(self.flatten_size, 64),
+            nn.ReLU(),
+            # Connect to a single scalar then Tanh for [-1, 1]
             nn.Linear(64, 1),
-            nn.Tanh(),
+            nn.Tanh()
         )
 
     def forward(self, x):
+        """Processes board state to return (policy_log_probs, state_value)."""
         x = self.conv(x)
-        for block in self.res_blocks:
-            x = F.relu(x + block(x))
-
-        p = self.policy_conv(x).view(-1, self.flat_features_policy)
-        v = self.value_conv(x).view(-1, self.flat_features_value)
-
-        return F.log_softmax(self.policy_fc(p), dim=1), self.value_fc(v)
+        x = x.view(x.size(0), -1)  # Flatten 4D tensor to 2D
+        
+        policy = self.policy_head(x)
+        value = self.value_head(x)
+        
+        return policy, value

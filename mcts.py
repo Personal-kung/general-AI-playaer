@@ -14,48 +14,39 @@ class MCTS:
         self.Ps = {}
 
     def search(self, state, depth=0):
-        # Safety Trigger: Stop if we go deeper than 100 moves (Board size limit)
+        # 1. Terminal State / Depth Check
         if depth > 200:
             return 0
 
-        s = state.astype(np.int8).tobytes()
-
-        # 1. Robust Hashing: Ensure state is integer for consistent keys
-        if isinstance(state, np.ndarray):
-            # 1. Round to handle float precision
-            # 2. Convert to int8 to save memory
-            state = np.round(state).astype(np.int8)
-
+        # Ensure state is consistent for hashing
+        state = np.round(state).astype(np.int8)
         s = state.tobytes()
 
         # 2. EXPANSION / LEAF NODE
         if s not in self.Ps:
-            # Prepare tensor [Batch=1, Channels=1, H, W]
+            # Prepare tensor [1, 1, Rows, Cols]
             state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
+            
+            # Check if model is on GPU
+            device = next(self.model.parameters()).device
+            state_tensor = state_tensor.to(device)
 
-            # Use GPU if available (Recommended for laptops with NVIDIA)
-            if next(self.model.parameters()).is_cuda:
-                state_tensor = state_tensor.cuda()
-
-            self.model.eval()  # Set to eval mode for inference
+            self.model.eval()
             with torch.no_grad():
                 policy, value = self.model(state_tensor)
 
-            # Policy head usually uses LogSoftmax, so we use exp()
-            self.Ps[s] = torch.exp(policy).cpu().numpy().flatten()
-
-            # Apply Masking
+            # Get flat probabilities [action_size]
+            probs = torch.exp(policy).cpu().numpy().flatten()
             mask = self.game.get_valid_moves(state)
-            self.Ps[s] = self.Ps[s] * mask
-
-            sum_ps = np.sum(self.Ps[s])
+            
+            # MASKING: Ensure shapes match by using game.action_size
+            probs = probs * mask
+            sum_ps = np.sum(probs)
+            
             if sum_ps > 0:
-                self.Ps[s] /= sum_ps
+                self.Ps[s] = probs / sum_ps
             else:
-                # Fallback: If model is totally lost, use uniform distribution
-                print(
-                    "Warning: Model predicted zero probability for all legal moves. Using uniform."
-                )
+                # Fallback: Uniform distribution over legal moves
                 self.Ps[s] = mask / np.sum(mask)
 
             self.Ns[s] = 0
@@ -64,41 +55,36 @@ class MCTS:
         # 3. SELECTION (PUCT Formula)
         best_u = -float("inf")
         best_a = -1
-
         valid_moves = self.game.get_valid_moves(state)
 
-        for a in range(self.game.cols):
+        # UNIVERSAL FIX: Iterate through action_size, not just columns
+        for a in range(self.game.action_size):
             if valid_moves[a]:
+                # Get Q-value or default to 0
                 q = self.Qsa.get((s, a), 0)
-                # PUCT: Q + U. We add 1e-8 to avoid division by zero
-                u = (
-                    self.args["cpuct"]
-                    * self.Ps[s][a]
-                    * (math.sqrt(self.Ns[s]) / (1 + self.Nsa.get((s, a), 0)))
-                )
+                
+                # PUCT: Q + U
+                # U = C * P(s,a) * sqrt(Sum(N)) / (1 + N(s,a))
+                u = (self.args["cpuct"] * self.Ps[s][a] * (math.sqrt(self.Ns[s]) / (1 + self.Nsa.get((s, a), 0))))
 
                 if q + u > best_u:
                     best_u = q + u
                     best_a = a
 
         # 4. RECURSION
+        # best_a is now the winning flat index (or column index for gravity games)
         next_state, next_player = self.game.get_next_state(state, 1, best_a)
         next_state = self.game.get_canonical_form(next_state, next_player)
 
-        # This MUST capture the value 'v' from the deeper node
-        # Increment depth here
         v = self.search(next_state, depth=depth + 1)
 
         # 5. BACKPROPAGATION
-        # Ensure 's' is the key for the CURRENT state, not the next_state
         if (s, best_a) in self.Qsa:
-            self.Qsa[(s, best_a)] = (
-                self.Nsa[(s, best_a)] * self.Qsa[(s, best_a)] + v
-            ) / (self.Nsa[(s, best_a)] + 1)
+            self.Qsa[(s, best_a)] = (self.Nsa[(s, best_a)] * self.Qsa[(s, best_a)] + v) / (self.Nsa[(s, best_a)] + 1)
             self.Nsa[(s, best_a)] += 1
         else:
             self.Qsa[(s, best_a)] = v
             self.Nsa[(s, best_a)] = 1
 
         self.Ns[s] += 1
-        return -v  # Return negative value for the opponent's perspective
+        return -v

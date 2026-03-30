@@ -13,7 +13,7 @@ import sys
 # This hides the warning, but Step 1 & 2 fix the actual crash that causes it
 warnings.filterwarnings("ignore", category=ResourceWarning)
 sys.setrecursionlimit(
-    1500
+    5000
 )  # Increase recursion limit for deeper MCTS searches (use with caution)
 
 
@@ -21,17 +21,17 @@ def initialize_system(game_name, board_image):
     # --- PHASE 1: RESEARCH (From Day 1) ---
     researcher = GameResearcher()
     specs = researcher.analyze_board(board_image, game_name)
-    # Ensure specs['board_shape'] is exactly what the model expects
-    # Force [1, Rows, Cols] regardless of what the LLM thought
-    refined_shape = [1, specs["board_shape"][1], specs["board_shape"][2]]
 
-    print(
-        f"[2/3] Building model with Shape: {refined_shape} and Actions: {specs['action_size']}"
+    # 1. Initialize Logic
+    game = GameLogic(
+        rows=specs["rows"], cols=specs["cols"], has_gravity=specs["has_gravity"]
     )
 
     # --- PHASE 2: ARCHITECTURE ---
     # specs['board_shape'] likely (1, rows, cols)
-    model = AlphaNet(input_shape=refined_shape, action_size=specs["action_size"])
+    model = AlphaNet(
+        input_shape=(1, specs["rows"], specs["cols"]), action_size=game.action_size
+    )
 
     # --- PHASE 3: LOGIC & SEARCH ---
     # Extract dimensions for the logic engine
@@ -69,6 +69,8 @@ def start_learning_cycle(model, game, iterations=10):
 
 def run_training_cycle(model, game, iterations=50, games_per_iter=10):
     buffer = ReplayBuffer(max_size=10000)  # Keep the last 10k moves
+    # Pass 'has_gravity' from the specs we got from the Researcher
+    has_gravity = specs.get("has_gravity", False)
 
     print(f"--- Starting Day 2 Training: {iterations} Iterations ---")
 
@@ -79,7 +81,9 @@ def run_training_cycle(model, game, iterations=50, games_per_iter=10):
         print(f"Iteration {i+1}: Self-playing {games_per_iter} games...")
         for g in range(games_per_iter):
             # execute_episode returns a list of (state, policy, reward)
-            game_data = execute_episode(game, model, mcts_simulations=50)
+            game_data = execute_episode(
+                game, model, mcts_simulations=50, has_gravity=has_gravity
+            )
             iteration_examples.extend(game_data)
             print(f"  Game {g+1} complete.")
 

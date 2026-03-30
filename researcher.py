@@ -5,27 +5,31 @@ import re
 
 
 class GameResearcher:
+    """
+    Identifies board game parameters via vision and web search.
+    Outputs a standardized config for the AlphaZero pipeline.
+    """
+
     def __init__(self, vision_model="llava", search_model="llama3"):
         self.vision_model = vision_model
         self.search_model = search_model
 
     def analyze_board(self, image_path, game_name):
+        """Processes image and rules to return a universal game configuration."""
         # 1. Visual Analysis
-        # Explicitly ask for integers to avoid "6x7" string values
-        prompt = f"Analyze this image of {game_name}. Return ONLY the number of rows and columns as integers."
-        response = ollama.chat(
+        v_prompt = f"Analyze this {game_name} board. Return ONLY the number of rows and columns as integers (e.g., 6, 7)."
+        v_resp = ollama.chat(
             model=self.vision_model,
-            messages=[{"role": "user", "content": prompt, "images": [image_path]}],
+            messages=[{"role": "user", "content": v_prompt, "images": [image_path]}],
         )
-        visual_context = response["message"]["content"]
 
         # 2. Web Research
-        # Added a timeout to prevent the script from hanging on laptop WiFi
         try:
             with DDGS(timeout=20) as ddgs:
                 results = list(
                     ddgs.text(
-                        f"{game_name} board dimensions and move count", max_results=2
+                        f"{game_name} official board dimensions and win rules",
+                        max_results=2,
                     )
                 )
                 rules_context = "\n".join([r["body"] for r in results])
@@ -33,41 +37,34 @@ class GameResearcher:
             rules_context = "Defaulting to standard rules."
 
         # 3. Parameter Synthesis
-        # We force the 'channels' to 1 and ensure board_shape is a list of ints
-        synthesis_prompt = f"""
-        Inputs: {visual_context} and {rules_context}
-        Synthesize for game: {game_name}
-        
-        Return ONLY valid JSON:
+        s_prompt = f"""
+        Analyze: Visual({v_resp['message']['content']}) Rules({rules_context})
+        Synthesize for '{game_name}'. Return ONLY JSON:
         {{
             "rows": int, 
             "cols": int,
-            "win_condition": "string"
+            "has_gravity": bool, 
+            "win_condition_length": int
         }}
         """
-
-        final_response = ollama.chat(
-            model=self.search_model,
-            messages=[{"role": "user", "content": synthesis_prompt}],
+        s_resp = ollama.chat(
+            model=self.search_model, messages=[{"role": "user", "content": s_prompt}]
         )
 
-        content = final_response["message"]["content"]
-
-        # Robust JSON cleaning: removes markdown and leading/trailing whitespace
-        clean_json = re.sub(r"```json|```", "", content).strip()
-        match = re.search(r"\{.*\}", clean_json, re.DOTALL)
-
+        # Robust JSON Extraction
+        match = re.search(r"\{.*\}", s_resp["message"]["content"], re.DOTALL)
         if match:
             data = json.loads(match.group())
-            rows = data.get("rows", 6)  # Default to 6 if LLM fails
-            cols = data.get("cols", 7)  # Default to 7 if LLM fails
 
-            # --- HARD-CODED CORRECTIONS ---
-            # 1. Force AlphaZero Standard: [Channels=1, Rows, Cols]
-            data["board_shape"] = [1, rows, cols]
+            # Universal Calculation
+            # For gravity games (Connect 4), actions = columns.
+            # For non-gravity (Tic-Tac-Toe/Go), actions = all cells.
+            if data.get("has_gravity", False):
+                data["action_size"] = data["cols"]
+            else:
+                data["action_size"] = data["rows"] * data["cols"]
 
-            # 2. Calculate Action Size mathematically (Columns for Connect 4)
-            # If the LLM didn't provide it, we assume cols (standard for gravity games)
-            data["action_size"] = cols
-
+            data["board_shape"] = [1, data["rows"], data["cols"]]
             return data
+
+        return None
