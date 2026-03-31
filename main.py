@@ -26,6 +26,7 @@ def initialize_system(game_name, board_image):
     game = GameLogic(
         rows=specs["rows"], cols=specs["cols"], has_gravity=specs["has_gravity"]
     )
+    print(specs)
 
     # --- PHASE 2: ARCHITECTURE ---
     # specs['board_shape'] likely (1, rows, cols)

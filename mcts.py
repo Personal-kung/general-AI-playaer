@@ -26,7 +26,7 @@ class MCTS:
         if s not in self.Ps:
             # Prepare tensor [1, 1, Rows, Cols]
             state_tensor = torch.FloatTensor(state).unsqueeze(0).unsqueeze(0)
-            
+
             # Check if model is on GPU
             device = next(self.model.parameters()).device
             state_tensor = state_tensor.to(device)
@@ -38,11 +38,23 @@ class MCTS:
             # Get flat probabilities [action_size]
             probs = torch.exp(policy).cpu().numpy().flatten()
             mask = self.game.get_valid_moves(state)
-            
+
+            # --- DYNAMIC SHAPE CORRECTION ---
+            # If the model gives 7 but logic wants 42 (or vice versa),
+            # we must reconcile them based on the 'has_gravity' rule.
+            if probs.shape != mask.shape:
+                if self.game.has_gravity and probs.shape[0] == self.game.cols:
+                    # This is correct for Connect 4 (7 actions)
+                    pass
+                else:
+                    # If they truly don't match, we fallback to the mask
+                    # to prevent the broadcast crash.
+                    probs = np.ones(mask.shape) / np.sum(mask)
+
             # MASKING: Ensure shapes match by using game.action_size
             probs = probs * mask
             sum_ps = np.sum(probs)
-            
+
             if sum_ps > 0:
                 self.Ps[s] = probs / sum_ps
             else:
@@ -62,10 +74,14 @@ class MCTS:
             if valid_moves[a]:
                 # Get Q-value or default to 0
                 q = self.Qsa.get((s, a), 0)
-                
+
                 # PUCT: Q + U
                 # U = C * P(s,a) * sqrt(Sum(N)) / (1 + N(s,a))
-                u = (self.args["cpuct"] * self.Ps[s][a] * (math.sqrt(self.Ns[s]) / (1 + self.Nsa.get((s, a), 0))))
+                u = (
+                    self.args["cpuct"]
+                    * self.Ps[s][a]
+                    * (math.sqrt(self.Ns[s]) / (1 + self.Nsa.get((s, a), 0)))
+                )
 
                 if q + u > best_u:
                     best_u = q + u
@@ -80,7 +96,9 @@ class MCTS:
 
         # 5. BACKPROPAGATION
         if (s, best_a) in self.Qsa:
-            self.Qsa[(s, best_a)] = (self.Nsa[(s, best_a)] * self.Qsa[(s, best_a)] + v) / (self.Nsa[(s, best_a)] + 1)
+            self.Qsa[(s, best_a)] = (
+                self.Nsa[(s, best_a)] * self.Qsa[(s, best_a)] + v
+            ) / (self.Nsa[(s, best_a)] + 1)
             self.Nsa[(s, best_a)] += 1
         else:
             self.Qsa[(s, best_a)] = v

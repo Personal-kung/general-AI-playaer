@@ -12,9 +12,9 @@ class GameLogic:
         self.cols = cols
         self.has_gravity = has_gravity
         if self.has_gravity:
-            self.action_size = self.cols # Should be 7 for Connect 4
+            self.action_size = self.cols  # Should be 7 for Connect 4
         else:
-            self.action_size = self.rows * self.cols # Should be 42 for others
+            self.action_size = self.rows * self.cols  # Should be 42 for others
         self.win_streak = win_streak
         # Gravity games use columns as actions; others use flat board indices.
         # self.action_size = cols if has_gravity else rows * cols
