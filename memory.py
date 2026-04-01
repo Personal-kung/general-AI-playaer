@@ -2,16 +2,23 @@ import collections
 import random
 import pickle
 
+
+# In memory.py
 class ReplayBuffer:
     def __init__(self, max_size=10000):
-        self.buffer = collections.deque(maxlen=max_size)
+        self.max_size = max_size
+        self.buffer = []
 
-    def save(self, memory):
-        self.buffer.extend(memory)
+    def add(self, experience):
+        """Adds a single (state, policy, value) triplet."""
+        if len(self.buffer) >= self.max_size:
+            self.buffer.pop(0)  # Remove oldest
+        self.buffer.append(experience)
 
     def sample(self, batch_size):
+        import random
+
         return random.sample(self.buffer, min(len(self.buffer), batch_size))
 
-    def save_to_disk(self, filename="buffer.pkl"):
-        with open(filename, 'wb') as f:
-            pickle.dump(self.buffer, f)
+    def __len__(self):
+        return len(self.buffer)
