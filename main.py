@@ -13,6 +13,12 @@ from researcher import GameResearcher
 # Suppress the socket warnings from researcher/ollama
 warnings.filterwarnings("ignore", category=ResourceWarning)
 
+# --- CRITICAL COLAB FIX: Use 'spawn' for CUDA safety ---
+try:
+    mp.set_start_method("spawn", force=True)
+except RuntimeError:
+    pass
+
 
 def play_single_game_worker(args):
     """
@@ -102,27 +108,27 @@ def initialize_system(game_name, board_image):
     return model, game, specs
 
 
-def run_day3_cycle(model, game, specs, iterations=50, games_per_iter=20):
+def run_day3_cycle(model, game, specs, iterations=50, games_per_iter=30):
+    # 1. FORCE MODEL TO GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    model.share_memory()  # Allows multiple processes to see the same GPU model
 
-    # Note: Resetting the buffer here means you start from 0 every time you run the script.
-    # If you want to keep data across restarts, you'd load a pkl file here.
     buffer = ReplayBuffer(max_size=20000)
     optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, "min", patience=3, factor=0.5
     )
 
-    print(
-        f"--- Starting Day 3 Scaling: {game.rows}x{game.cols} (Gravity: {game.has_gravity}) ---"
-    )
+    print(f"--- GPU ACTIVE: Training on {device} ---")
 
     for i in range(iterations):
         print(f"\nIteration {i+1}/{iterations}")
 
-        model.to("cpu")  # Essential for stable multiprocessing
-        state_dict = model.state_dict()
+        # 2. SELF-PLAY (CPU Workers calling GPU Inference)
+        # We use a smaller worker count on Colab (2-4) to avoid CPU bottlenecking
+        num_workers = 2
+        state_dict = model.state_dict()  # Pass weights to workers
         worker_args = (
             state_dict,
             game.rows,
@@ -132,36 +138,29 @@ def run_day3_cycle(model, game, specs, iterations=50, games_per_iter=20):
             60,
         )
 
-        # --- RESTORED PARALLELISM ---
-        num_workers = min(mp.cpu_count(), games_per_iter)
-        print(f"  Self-playing {games_per_iter} games using {num_workers} workers...")
-
         with mp.Pool(processes=num_workers) as pool:
             batch_results = pool.map(
                 play_single_game_worker, [worker_args] * games_per_iter
             )
 
-        # --- DATA ACCUMULATION ---
         for game_history in batch_results:
-            if game_history:  # Ensure worker didn't return None
+            if game_history:
                 for step in game_history:
                     buffer.add(step)
 
-        # --- TRAINING PHASE ---
-        model.to(device)
+        # 3. TRAINING PHASE (THE GPU STAR)
         if len(buffer) >= 128:
-            # IMPORTANT: Ensure your train() function in train.py returns the loss value!
-            total_loss = train(model, buffer, batch_size=64, epochs=4)
+            model.train()  # Switch to training mode
+            # Ensure train() moves its own tensors to 'device' internally
+            total_loss = train(model, buffer, batch_size=128, epochs=5)
 
-            # Safety check for the scheduler error we saw earlier
             if total_loss is not None:
                 scheduler.step(total_loss)
                 current_lr = optimizer.param_groups[0]["lr"]
                 print(
-                    f"  Training Complete | Loss: {total_loss:.4f} | LR: {current_lr}"
+                    f"  [GPU] Training Complete | Loss: {total_loss:.4f} | LR: {current_lr}"
                 )
                 torch.save(model.state_dict(), "latest_model.pth")
-                print(f"  [SAVED] Checkpoint updated.")
         else:
             print(f"  [WAITING] Collecting more data... ({len(buffer)}/128)")
 
@@ -171,7 +170,7 @@ if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
     # 1. Flexible Setup based on image analysis
-    model, game, specs = initialize_system("Connect 4", "test.png")    
+    model, game, specs = initialize_system("Connect 4", "base.png")
 
     # 2. Run the High-Performance Day 3 Loop
     run_day3_cycle(model, game, specs)
