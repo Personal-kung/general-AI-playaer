@@ -34,7 +34,7 @@ def play_single_game_worker(args):
     model.eval()
 
     # 2. Setup MCTS for this specific worker
-    mcts = MCTS(game, model, args={"cpuct": 1.41})
+    mcts = MCTS(game, model, args={"cpuct": 2.5})
     game_history = []
     state = game.get_initial_state()
     current_player = 1
@@ -115,7 +115,7 @@ def run_day3_cycle(model, game, specs, iterations=50, games_per_iter=30):
     model.share_memory()  # Allows multiple processes to see the same GPU model
 
     buffer = ReplayBuffer(max_size=20000)
-    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=0.0002, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, "min", patience=3, factor=0.5
     )
@@ -135,7 +135,7 @@ def run_day3_cycle(model, game, specs, iterations=50, games_per_iter=30):
             game.cols,
             game.has_gravity,
             game.action_size,
-            60,
+            128,
         )
 
         with mp.Pool(processes=num_workers) as pool:
